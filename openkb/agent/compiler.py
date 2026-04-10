@@ -215,14 +215,18 @@ async def _llm_call_async(model: str, messages: list[dict], step_name: str) -> s
 
 
 def _parse_json(text: str) -> list | dict:
-    """Parse JSON from LLM response, stripping markdown fences if present."""
+    """Parse JSON from LLM response, handling fences, prose, and malformed JSON."""
+    from json_repair import repair_json
     cleaned = text.strip()
     if cleaned.startswith("```"):
-        first_nl = cleaned.index("\n")
-        cleaned = cleaned[first_nl + 1:]
+        first_nl = cleaned.find("\n")
+        cleaned = cleaned[first_nl + 1:] if first_nl != -1 else cleaned[3:]
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
-    return json.loads(cleaned.strip())
+    result = json.loads(repair_json(cleaned.strip()))
+    if not isinstance(result, (dict, list)):
+        raise ValueError(f"Expected JSON object or array, got {type(result).__name__}")
+    return result
 
 
 # ---------------------------------------------------------------------------
