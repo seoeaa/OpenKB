@@ -19,7 +19,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.shortcuts import CompleteStyle, print_formatted_text
 from prompt_toolkit.styles import Style
 
 from openkb.agent.chat_session import ChatSession
@@ -188,9 +188,16 @@ def _bottom_toolbar(session: ChatSession) -> FormattedText:
     )
 
 
-_SLASH_COMMANDS = [
-    "/exit", "/quit", "/help", "/clear", "/save",
-    "/status", "/list", "/lint", "/add",
+_SLASH_COMMANDS: list[tuple[str, str]] = [
+    ("/exit",   "Exit (Ctrl-D also works)"),
+    ("/quit",   "Exit (alias)"),
+    ("/help",   "Show available commands"),
+    ("/clear",  "Start a fresh session"),
+    ("/save",   "Export transcript to wiki/explorations/"),
+    ("/status", "Show knowledge base status"),
+    ("/list",   "List all documents"),
+    ("/lint",   "Lint the knowledge base"),
+    ("/add",    "Add a document or directory"),
 ]
 
 
@@ -205,22 +212,19 @@ class _ChatCompleter(Completer):
 
         # After "/add ", complete file paths
         if text.lstrip().lower().startswith("/add "):
-            # Extract the path portion after "/add "
-            prefix = text.lstrip()
-            add_pos = prefix.lower().index("/add ") + 5
-            path_text = prefix[add_pos:]
-            # Strip surrounding quotes if the user started one
+            path_text = text.lstrip()[5:]
+            # Strip leading quote if user started one
             if path_text and path_text[0] in ("'", '"'):
                 path_text = path_text[1:]
             path_doc = Document(path_text, len(path_text))
             yield from self._path_completer.get_completions(path_doc, complete_event)
             return
 
-        # Complete slash commands
+        # Complete slash commands with descriptions
         if text.startswith("/"):
-            for cmd in _SLASH_COMMANDS:
+            for cmd, desc in _SLASH_COMMANDS:
                 if cmd.startswith(text.lower()):
-                    yield Completion(cmd, start_position=-len(text))
+                    yield Completion(cmd, start_position=-len(text), display_meta=desc)
 
 
 def _make_prompt_session(session: ChatSession, style: Style, use_color: bool, kb_dir: Path) -> PromptSession:
@@ -231,6 +235,7 @@ def _make_prompt_session(session: ChatSession, style: Style, use_color: bool, kb
         message=FormattedText([("class:prompt", ">>> ")]),
         style=style,
         completer=_ChatCompleter(),
+        complete_style=CompleteStyle.MULTI_COLUMN,
         history=FileHistory(str(history_path)),
         bottom_toolbar=(lambda: _bottom_toolbar(session)) if use_color else None,
     )
