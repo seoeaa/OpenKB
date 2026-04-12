@@ -9,7 +9,7 @@ import pytest
 
 from prompt_toolkit.styles import Style
 
-from openkb.agent.chat import _handle_slash, _run_add
+from openkb.agent.chat import _handle_slash, _run_add, run_chat
 from openkb.agent.chat_session import ChatSession
 
 
@@ -155,6 +155,36 @@ async def test_slash_lint(tmp_path):
     with patch("openkb.cli.run_lint", new_callable=AsyncMock, return_value=tmp_path / "report.md"):
         result = await _handle_slash("/lint", kb_dir, session, _STYLE)
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_chat_handles_ctrl_c_during_slash_command(tmp_path):
+    kb_dir = _setup_kb(tmp_path)
+    session = _make_session(kb_dir)
+
+    class _FakePromptSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def prompt_async(self) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                return "/lint"
+            raise EOFError
+
+    prompt = _FakePromptSession()
+    p, collected = _collect_fmt()
+    with (
+        p,
+        patch("openkb.agent.chat.build_query_agent", return_value=object()),
+        patch("openkb.agent.chat._print_header"),
+        patch("openkb.agent.chat._make_prompt_session", return_value=prompt),
+        patch("openkb.agent.chat._handle_slash", new_callable=AsyncMock, side_effect=KeyboardInterrupt),
+    ):
+        await run_chat(kb_dir, session, no_color=True)
+
+    assert prompt.calls == 2
+    assert any("[aborted]" in s for s in collected)
 
 
 @pytest.mark.asyncio

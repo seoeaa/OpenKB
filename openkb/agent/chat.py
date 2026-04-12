@@ -509,7 +509,11 @@ async def run_chat(
             continue
 
         if user_input.startswith("/"):
-            action = await _handle_slash(user_input, kb_dir, session, style)
+            try:
+                action = await _handle_slash(user_input, kb_dir, session, style)
+            except KeyboardInterrupt:
+                _fmt(style, ("class:error", "\n[aborted]\n"))
+                continue
             if action == "exit":
                 return
             if action == "new_session":

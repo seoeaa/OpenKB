@@ -63,7 +63,7 @@ class TestAddCommand:
             result = runner.invoke(cli, ["add", "somefile.pdf"])
             assert "No knowledge base found" in result.output
 
-    def testadd_single_file_calls_helper(self, tmp_path):
+    def test_add_single_file_calls_helper(self, tmp_path):
         kb_dir = self._setup_kb(tmp_path)
         doc = tmp_path / "test.md"
         doc.write_text("# Hello")
