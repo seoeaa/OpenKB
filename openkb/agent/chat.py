@@ -247,6 +247,7 @@ def _make_prompt_session(session: ChatSession, style: Style, use_color: bool, kb
         style=style,
         completer=_ChatCompleter(),
         complete_style=CompleteStyle.MULTI_COLUMN,
+        complete_while_typing=False,
         history=FileHistory(str(history_path)),
         bottom_toolbar=(lambda: _bottom_toolbar(session)) if use_color else None,
     )
