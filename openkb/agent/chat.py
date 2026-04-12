@@ -277,7 +277,7 @@ async def _run_turn(
                         collected.append(text)
                         last_was_text = True
                         if live:
-                            live.update(Markdown("".join(collected)))
+                            live.update(Markdown("".join(collected), code_theme="monokai"))
                         else:
                             sys.stdout.write(text)
                             sys.stdout.flush()
