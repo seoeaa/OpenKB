@@ -46,6 +46,10 @@ _HELP_TEXT = (
     "  /exit          Exit (Ctrl-D also works)\n"
     "  /clear         Start a fresh session (current one is kept on disk)\n"
     "  /save [name]   Export transcript to wiki/explorations/\n"
+    "  /status        Show knowledge base status\n"
+    "  /list          List all documents in the knowledge base\n"
+    "  /lint          Lint the knowledge base\n"
+    "  /add <path>    Add a document or directory to the knowledge base\n"
     "  /help          Show this"
 )
 
@@ -271,6 +275,37 @@ def _save_transcript(kb_dir: Path, session: ChatSession, name: str | None) -> Pa
     return path
 
 
+async def _run_add(arg: str, kb_dir: Path, style: Style) -> None:
+    """Add a document or directory to the knowledge base from the chat REPL."""
+    import asyncio
+    from openkb.cli import _add_single_file, SUPPORTED_EXTENSIONS
+
+    target = Path(arg).expanduser()
+    if not target.is_absolute():
+        target = Path.cwd() / target
+    target = target.resolve()
+
+    if not target.exists():
+        _fmt(style, ("class:error", f"Path does not exist: {arg}\n"))
+        return
+
+    if target.is_dir():
+        files = [
+            f for f in sorted(target.rglob("*"))
+            if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+        ]
+        if not files:
+            _fmt(style, ("class:error", f"No supported files found in {arg}.\n"))
+            return
+        for f in files:
+            await asyncio.to_thread(_add_single_file, f, kb_dir)
+    else:
+        if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            _fmt(style, ("class:error", f"Unsupported file type: {target.suffix}\n"))
+            return
+        await asyncio.to_thread(_add_single_file, target, kb_dir)
+
+
 async def _handle_slash(
     cmd: str,
     kb_dir: Path,
@@ -305,6 +340,28 @@ async def _handle_slash(
             return None
         path = _save_transcript(kb_dir, session, arg or None)
         _fmt(style, ("class:slash.ok", f"Saved to {path}\n"))
+        return None
+
+    if head == "/status":
+        from openkb.cli import print_status
+        print_status(kb_dir)
+        return None
+
+    if head == "/list":
+        from openkb.cli import print_list
+        print_list(kb_dir)
+        return None
+
+    if head == "/lint":
+        from openkb.cli import run_lint
+        await run_lint(kb_dir)
+        return None
+
+    if head == "/add":
+        if not arg:
+            _fmt(style, ("class:error", "Usage: /add <path>\n"))
+            return None
+        await _run_add(arg, kb_dir, style)
         return None
 
     _fmt(
