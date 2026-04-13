@@ -125,8 +125,7 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
 
     if use_color:
         from rich.live import Live
-        from rich.markdown import Markdown
-        from openkb.agent.chat import _make_rich_console
+        from openkb.agent.chat import _make_markdown, _make_rich_console
         console = _make_rich_console()
     else:
         console = None  # type: ignore[assignment]
@@ -152,7 +151,7 @@ async def run_query(question: str, kb_dir: Path, model: str, stream: bool = Fals
                         collected.append(text)
                         segment.append(text)
                         if live:
-                            live.update(Markdown("".join(segment), code_theme="monokai"))
+                            live.update(_make_markdown("".join(segment)))
                         else:
                             sys.stdout.write(text)
                             sys.stdout.flush()

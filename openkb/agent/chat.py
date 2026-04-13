@@ -190,34 +190,15 @@ def _make_prompt_session(session: ChatSession, style: Style, use_color: bool) ->
 
 
 def _make_rich_console() -> Any:
-    """Create a Rich Console with a Claude-Code-like Markdown theme."""
     from rich.console import Console
-    from rich.theme import Theme
 
-    theme = Theme({
-        # Headings: bold with blue tint
-        "markdown.h1":        "bold #5fa0e0",
-        "markdown.h2":        "bold #5fa0e0",
-        "markdown.h3":        "bold #7ab0e8",
-        "markdown.h4":        "bold #8abae0",
-        # Code
-        "markdown.code":      "#e8c87a on #1e1e1e",
-        # Links
-        "markdown.link":      "underline #5fa0e0",
-        "markdown.link_url":  "#5fa0e0",
-        # Emphasis
-        "markdown.bold":      "bold #e0e0e0",
-        "markdown.italic":    "italic #c0c0c0",
-        # Lists and block quotes
-        "markdown.item.bullet":   "#6ac0a0",
-        "markdown.item.number":   "#6ac0a0",
-        "markdown.block_quote":   "italic #8a8a8a",
-        # Horizontal rule
-        "markdown.hr":        "#4a4a4a",
-        # Paragraphs — ensure normal text is visible
-        "markdown.paragraph":     "#d0d0d0",
-    })
-    return Console(theme=theme)
+    return Console()
+
+
+def _make_markdown(text: str) -> Any:
+    from openkb.agent._markdown import render
+
+    return render(text)
 
 
 async def _run_turn(
@@ -245,7 +226,6 @@ async def _run_turn(
     if use_color:
         from rich.console import Console
         from rich.live import Live
-        from rich.markdown import Markdown
 
         console = _make_rich_console()
     else:
@@ -278,7 +258,7 @@ async def _run_turn(
                         segment.append(text)
                         last_was_text = True
                         if live:
-                            live.update(Markdown("".join(segment), code_theme="monokai"))
+                            live.update(_make_markdown("".join(segment)))
                         else:
                             sys.stdout.write(text)
                             sys.stdout.flush()
