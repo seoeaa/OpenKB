@@ -16,7 +16,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from starlette.routing import Route, WebSocket
 
 
@@ -248,6 +248,11 @@ async def search_handler(request: Request) -> JSONResponse:
     return JSONResponse({"pattern": pattern, "matches": matches, "count": len(matches)})
 
 
+async def index_handler(request: Request) -> HTMLResponse:
+    from openkb.web import get_index_html
+    return HTMLResponse(get_index_html())
+
+
 async def chat_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     kb_dir = websocket.app.state.kb_dir
@@ -297,6 +302,7 @@ async def chat_ws(websocket: WebSocket) -> None:
 
 
 routes = [
+    Route("/", index_handler),
     Route("/api/status", status_handler),
     Route("/api/list", list_handler),
     Route("/api/read", read_handler),

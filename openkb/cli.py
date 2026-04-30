@@ -128,14 +128,13 @@ def _find_kb_dir(override: Path | None = None) -> Path | None:
     return None
 
 
-def add_single_file(file_path: Path, kb_dir: Path) -> None:
+def add_single_file(file_path: Path, kb_dir: Path, subpath: str = "") -> None:
     """Convert, index, and compile a single document into the knowledge base.
 
-    Steps:
-    1. Load config to get the model name.
-    2. Convert the document (hash-check; skip if already known).
-    3. If long doc: run PageIndex then compile_long_doc.
-    4. Else: compile_short_doc.
+    Args:
+        file_path: Path to the file to add.
+        kb_dir: Knowledge base root directory.
+        subpath: Relative subdirectory path within raw/ (for nested folder support).
     """
     from openkb.agent.compiler import compile_long_doc, compile_short_doc
     from openkb.state import HashRegistry
@@ -147,10 +146,9 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
     model: str = config.get("model", DEFAULT_CONFIG["model"])
     registry = HashRegistry(openkb_dir / "hashes.json")
 
-    # 2. Convert document
     click.echo(f"Adding: {file_path.name}")
     try:
-        result = convert_document(file_path, kb_dir)
+        result = convert_document(file_path, kb_dir, subpath=subpath)
     except Exception as exc:
         click.echo(f"  [ERROR] Conversion failed: {exc}")
         logger.debug("Conversion traceback:", exc_info=True)
@@ -161,40 +159,74 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
         return
 
     doc_name = file_path.stem
+    if subpath:
+        doc_name = subpath.replace("/", "-") + "-" + doc_name
 
-    # 3/4. Index and compile
     if result.is_long_doc:
-        click.echo(f"  Long document detected — indexing with PageIndex...")
-        try:
-            from openkb.indexer import index_long_document
-            index_result = index_long_document(result.raw_path, kb_dir)
-        except Exception as exc:
-            click.echo(f"  [ERROR] Indexing failed: {exc}")
-            logger.debug("Indexing traceback:", exc_info=True)
-            return
-
-        summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
-        click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})...")
-        for attempt in range(2):
+        if result.long_doc_type == "chunked":
+            click.echo(f"  Large document detected — chunking into sections...")
+            from openkb.large_doc import index_large_nonpdf
             try:
-                asyncio.run(
-                    compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model,
-                                     doc_description=index_result.description)
-                )
-                break
+                index_result = index_large_nonpdf(doc_name, result.source_path or (kb_dir / "wiki" / "sources" / f"{doc_name}.md"), kb_dir)
             except Exception as exc:
-                if attempt == 0:
-                    click.echo(f"  Retrying compilation in 2s...")
-                    time.sleep(2)
-                else:
-                    click.echo(f"  [ERROR] Compilation failed: {exc}")
-                    logger.debug("Compilation traceback:", exc_info=True)
-                    return
+                click.echo(f"  [ERROR] Chunk indexing failed: {exc}")
+                logger.debug("Chunk indexing traceback:", exc_info=True)
+                return
+
+            summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
+            click.echo(f"  Compiling chunked doc (sections={len(index_result.get('tree', {}).get('structure', []))})...")
+            for attempt in range(2):
+                try:
+                    asyncio.run(
+                        compile_long_doc(doc_name, summary_path, index_result["doc_id"], kb_dir, model,
+                                         doc_description=index_result.get("description", ""))
+                    )
+                    break
+                except Exception as exc:
+                    if attempt == 0:
+                        click.echo(f"  Retrying compilation in 2s...")
+                        time.sleep(2)
+                    else:
+                        click.echo(f"  [ERROR] Compilation failed: {exc}")
+                        logger.debug("Compilation traceback:", exc_info=True)
+                        return
+            if result.file_hash:
+                registry.add(result.file_hash, {"name": file_path.name, "type": "chunked"})
+        else:
+            click.echo(f"  Long document detected — indexing with PageIndex...")
+            try:
+                from openkb.indexer import index_long_document
+                index_result = index_long_document(result.raw_path or file_path, kb_dir)
+            except Exception as exc:
+                click.echo(f"  [ERROR] Indexing failed: {exc}")
+                logger.debug("Indexing traceback:", exc_info=True)
+                return
+
+            summary_path = kb_dir / "wiki" / "summaries" / f"{doc_name}.md"
+            click.echo(f"  Compiling long doc (doc_id={index_result.doc_id})...")
+            for attempt in range(2):
+                try:
+                    asyncio.run(
+                        compile_long_doc(doc_name, summary_path, index_result.doc_id, kb_dir, model,
+                                         doc_description=index_result.description)
+                    )
+                    break
+                except Exception as exc:
+                    if attempt == 0:
+                        click.echo(f"  Retrying compilation in 2s...")
+                        time.sleep(2)
+                    else:
+                        click.echo(f"  [ERROR] Compilation failed: {exc}")
+                        logger.debug("Compilation traceback:", exc_info=True)
+                        return
+            if result.file_hash:
+                doc_type = "long_pdf"
+                registry.add(result.file_hash, {"name": file_path.name, "type": doc_type})
     else:
         click.echo(f"  Compiling short doc...")
         for attempt in range(2):
             try:
-                asyncio.run(compile_short_doc(doc_name, result.source_path, kb_dir, model))
+                asyncio.run(compile_short_doc(doc_name, result.source_path or (kb_dir / "wiki" / "sources" / f"{doc_name}.md"), kb_dir, model))
                 break
             except Exception as exc:
                 if attempt == 0:
@@ -204,11 +236,9 @@ def add_single_file(file_path: Path, kb_dir: Path) -> None:
                     click.echo(f"  [ERROR] Compilation failed: {exc}")
                     logger.debug("Compilation traceback:", exc_info=True)
                     return
-
-    # Register hash only after successful compilation
-    if result.file_hash:
-        doc_type = "long_pdf" if result.is_long_doc else file_path.suffix.lstrip(".")
-        registry.add(result.file_hash, {"name": file_path.name, "type": doc_type})
+        if result.file_hash:
+            doc_type = file_path.suffix.lstrip(".")
+            registry.add(result.file_hash, {"name": file_path.name, "type": doc_type})
 
     append_log(kb_dir / "wiki", "ingest", file_path.name)
     click.echo(f"  [OK] {file_path.name} added to knowledge base.")
@@ -345,8 +375,10 @@ def add(ctx, path):
         total = len(files)
         click.echo(f"Found {total} supported file(s) in {path}.")
         for i, f in enumerate(files, 1):
+            rel_to_target = f.parent.relative_to(target)
+            subpath = str(rel_to_target) if str(rel_to_target) != "." else ""
             click.echo(f"\n[{i}/{total}] ", nl=False)
-            add_single_file(f, kb_dir)
+            add_single_file(f, kb_dir, subpath=subpath)
     else:
         if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
             click.echo(
@@ -529,7 +561,7 @@ def watch(ctx):
                     f"Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
                 )
                 continue
-            add_single_file(fp, kb_dir)
+            add_single_file(fp, kb_dir, subpath="")
 
     click.echo(f"Watching {raw_dir} for new documents. Press Ctrl+C to stop.")
     watch_directory(raw_dir, on_new_files)
@@ -918,6 +950,64 @@ def sync_status(ctx):
         return
     from openkb.sync_git import status
     click.echo(status(kb_dir))
+
+
+@cli.command(name="tree")
+@click.pass_context
+def tree_cmd(ctx):
+    """Show concept hierarchy as a tree."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    concepts_dir = kb_dir / "wiki" / "concepts"
+    if not concepts_dir.exists() or not list(concepts_dir.glob("*.md")):
+        click.echo("No concepts yet.")
+        return
+
+    parent_map: dict[str, str | None] = {}
+    titles: dict[str, str] = {}
+
+    for md in sorted(concepts_dir.glob("*.md")):
+        slug = md.stem
+        text = md.read_text(encoding="utf-8")
+        titles[slug] = slug.replace("-", " ").title()
+        parent = None
+        if text.startswith("---"):
+            end = text.find("---", 3)
+            if end != -1:
+                fm = text[:end + 3]
+                for line in fm.split("\n"):
+                    if line.startswith("parent:"):
+                        parent = line[len("parent:"):].strip()
+                        break
+                for line in fm.split("\n"):
+                    if line.startswith("title:"):
+                        titles[slug] = line[len("title:"):].strip()
+                        break
+        parent_map[slug] = parent
+
+    roots = [s for s, p in parent_map.items() if not p]
+    children: dict[str, list[str]] = {s: [] for s in parent_map}
+    for slug, parent in parent_map.items():
+        if parent and parent in parent_map:
+            children.setdefault(parent, []).append(slug)
+
+    def _print_node(slug: str, indent: int = 0):
+        prefix = "  " * indent + ("\u2514\u2500 " if indent > 0 else "")
+        click.echo(f"{prefix}[[concepts/{slug}]] \u2014 {titles.get(slug, slug)}")
+        for child in sorted(children.get(slug, [])):
+            _print_node(child, indent + 1)
+
+    for root in sorted(roots):
+        _print_node(root, 0)
+
+    orphans = [s for s in parent_map if s not in roots and not parent_map.get(s)]
+    if orphans:
+        click.echo("\nOrphaned concepts (no parent):")
+        for s in sorted(orphans):
+            click.echo(f"  [[concepts/{s}]] \u2014 {titles.get(s, s)}")
 
 
 @cli.group(name="history")
