@@ -23,6 +23,32 @@ from openkb.config import DEFAULT_CONFIG, load_config
 from openkb.lint import run_structural_lint
 
 
+def _setup_mcp_key(kb_dir: Path | None) -> None:
+    """Set up LLM key for MCP tools that need the LLM."""
+    if kb_dir is None:
+        return
+
+    import os
+    from dotenv import load_dotenv
+    from openkb.config import GLOBAL_CONFIG_DIR
+    import litellm
+
+    env_file = kb_dir / ".env"
+    if env_file.exists():
+        load_dotenv(env_file, override=False)
+
+    global_env = GLOBAL_CONFIG_DIR / ".env"
+    if global_env.exists():
+        load_dotenv(global_env, override=False)
+
+    api_key = os.environ.get("LLM_API_KEY", "")
+    if api_key:
+        litellm.api_key = api_key
+        for env_var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"):
+            if not os.environ.get(env_var):
+                os.environ[env_var] = api_key
+
+
 def _find_kb_dir() -> Path | None:
     current = Path.cwd().resolve()
     while True:
@@ -345,8 +371,10 @@ def resource_log() -> str:
 
 
 def run_stdio():
+    _setup_mcp_key(_find_kb_dir())
     mcp.run()
 
 
 async def run_sse(host: str = "0.0.0.0", port: int = 8001):
+    _setup_mcp_key(_find_kb_dir())
     await mcp.run_sse_async(host=host, port=port)

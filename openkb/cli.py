@@ -71,7 +71,7 @@ def _setup_llm_key(kb_dir: Path | None = None) -> None:
             )
     else:
         litellm.api_key = api_key
-        for env_var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
+        for env_var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"):
             if not os.environ.get(env_var):
                 os.environ[env_var] = api_key
 
