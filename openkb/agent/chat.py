@@ -59,6 +59,18 @@ _HELP_TEXT = (
     "  /list          List all documents in the knowledge base\n"
     "  /lint          Lint the knowledge base\n"
     "  /add <path>    Add a document or directory to the knowledge base\n"
+    "\n"
+    "  Skill commands:\n"
+    "  /summarize <page>    Summarize a wiki page\n"
+    "  /compare <p1> <p2>   Compare two wiki pages\n"
+    "  /export <file> [s]   Export wiki to Markdown (concepts|summaries|all)\n"
+    "  /search <pattern>    Search wiki content\n"
+    "  /diff                Show recent git changes\n"
+    "  /snapshot [label]    Create a wiki snapshot\n"
+    "  /history             Show snapshot history\n"
+    "  /revert <id>         Revert wiki to a snapshot (--dry-run)\n"
+    "  /sync                Commit, push and pull wiki\n"
+    "\n"
     "  /help          Show this"
 )
 
@@ -207,31 +219,38 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
 ]
 
 
+def _build_slash_commands():
+    commands = list(_SLASH_COMMANDS)
+    from openkb.skills import get_all as get_skills
+    for name, skill in get_skills().items():
+        display = name
+        if skill.needs_arg and skill.arg_help:
+            display = f"{name} {skill.arg_help}"
+        commands.append((f"/{display}", skill.description))
+    return commands
+
+
 class _ChatCompleter(Completer):
     """Complete slash commands and file paths after /add."""
 
-    def __init__(self) -> None:
+    def __init__(self):
         self._path_completer = PathCompleter(expanduser=True)
+        self._slash_commands = _build_slash_commands()
 
     def get_completions(self, document: Document, complete_event: Any) -> Any:
         text = document.text_before_cursor
 
-        # After "/add ", complete file paths (skip dotfiles)
         if text.lstrip().lower().startswith("/add "):
             path_text = text.lstrip()[5:]
-            # Strip leading quote so PathCompleter resolves the real path
             quote_char = ""
             if path_text and path_text[0] in ("'", '"'):
                 quote_char = path_text[0]
                 path_text = path_text[1:]
             path_doc = Document(path_text, len(path_text))
             for c in self._path_completer.get_completions(path_doc, complete_event):
-                # Hide dotfiles unless the user explicitly typed a dot
                 basename = c.text.lstrip("/")
                 if basename.startswith(".") and not path_text.rpartition("/")[2].startswith("."):
                     continue
-                # Append closing quote for files; skip for directories so
-                # the user can keep navigating into subdirectories.
                 if quote_char and not c.text.endswith("/"):
                     comp_text = c.text + quote_char
                 else:
@@ -244,9 +263,8 @@ class _ChatCompleter(Completer):
                 )
             return
 
-        # Complete slash commands with descriptions
         if text.startswith("/"):
-            for cmd, desc in _SLASH_COMMANDS:
+            for cmd, desc in self._slash_commands:
                 if cmd.startswith(text.lower()):
                     yield Completion(cmd, start_position=-len(text), display_meta=desc)
 
@@ -529,6 +547,24 @@ async def _handle_slash(
         await _run_add(arg, kb_dir, style)
         return None
 
+    from openkb.skills import get as get_skill
+    skill = get_skill(head.lstrip("/"))
+    if skill is not None:
+        if skill.needs_arg and not arg:
+            usage = f"/{head} {skill.arg_help}" if skill.arg_help else f"/{head} <arg>"
+            _fmt(style, ("class:error", f"Usage: {usage}\n"))
+            return None
+        try:
+            await skill.handler(
+                arg=arg,
+                kb_dir=kb_dir,
+                style=style,
+                fmt_fn=_fmt,
+            )
+        except Exception as exc:
+            _fmt(style, ("class:error", f"[ERROR] Skill failed: {exc}\n"))
+        return None
+
     _fmt(
         style,
         ("class:error", f"Unknown command: {head}. Try /help.\n"),
@@ -545,6 +581,9 @@ async def run_chat(
 ) -> None:
     """Run the chat REPL against ``session`` until the user exits."""
     from openkb.config import load_config
+    from openkb.plugins import discover_plugins
+
+    discover_plugins(kb_dir)
 
     use_color = _use_color(force_off=no_color)
     style = _build_style(use_color)

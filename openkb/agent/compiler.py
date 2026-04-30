@@ -345,6 +345,11 @@ def _write_summary(wiki_dir: Path, doc_name: str, summary: str,
             summary = summary[end + 3:].lstrip("\n")
     summaries_dir = wiki_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
+
+    from openkb.history import snapshot_wiki
+    kb_dir = wiki_dir.parent
+    snapshot_wiki(kb_dir, label=f"pre-summary-{doc_name}")
+
     ext = "md" if doc_type == "short" else "json"
     fm_lines = [
         f"doc_type: {doc_type}",
@@ -374,7 +379,11 @@ def _write_concept(wiki_dir: Path, name: str, content: str, source_file: str, is
         logger.warning("Concept name escapes concepts dir: %s", name)
         return
 
+    from openkb.history import snapshot_wiki
+    kb_dir = wiki_dir.parent
+
     if is_update and path.exists():
+        snapshot_wiki(kb_dir, label=f"pre-update-concept-{safe_name}")
         existing = path.read_text(encoding="utf-8")
         if source_file not in existing:
             if existing.startswith("---"):

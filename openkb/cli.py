@@ -724,3 +724,322 @@ def status(ctx):
         click.echo("No knowledge base found. Run `openkb init` first.")
         return
     print_status(kb_dir)
+
+
+@cli.command()
+@click.option("--host", default="0.0.0.0", help="Host for SSE transport.")
+@click.option("--port", default=8001, type=int, help="Port for SSE transport.")
+@click.pass_context
+def mcp(ctx, host, port):
+    """Start the MCP server (stdio or SSE transport)."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is not None:
+        os.environ["OPENKB_DIR"] = str(kb_dir)
+
+    if os.environ.get("OPENKB_MCP_SSE"):
+        import asyncio
+        from openkb.mcp_server import run_sse
+        click.echo(f"Starting MCP server (SSE) on {host}:{port}")
+        asyncio.run(run_sse(host, port))
+    else:
+        from openkb.mcp_server import run_stdio
+        click.echo("Starting MCP server (stdio). Connect via MCP-compatible client.")
+        run_stdio()
+
+
+@cli.command()
+@click.argument("paths", nargs=-1, required=True)
+@click.pass_context
+def graph(ctx, paths):
+    """Generate an interactive graph visualization of wiki connections.
+
+    Outputs an HTML file with an interactive force-directed graph.
+    If a .md path is also given, exports an adjacency list in Markdown.
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    from openkb.graph import generate_graph
+
+    output_paths = list(paths)
+    html_path = None
+    md_path = None
+
+    for p in output_paths:
+        p_str = str(p)
+        if p_str.endswith(".html"):
+            html_path = Path(p_str)
+        elif p_str.endswith(".md"):
+            md_path = Path(p_str)
+
+    if html_path is None:
+        html_path = kb_dir / "wiki" / "graph.html"
+
+    generate_graph(kb_dir, html_path, md_path)
+    click.echo(f"Graph generated: {html_path}")
+    if md_path:
+        click.echo(f"Adjacency list: {md_path}")
+
+
+@cli.command()
+@click.argument("source_dir", type=click.Path(exists=True, file_okay=False))
+@click.argument("target_subdir", default="mirror")
+@click.pass_context
+def mirror(ctx, source_dir, target_subdir):
+    """Mirror an external directory of Markdown files into the wiki.
+
+    Watches source_dir for changes and syncs .md files into wiki/<target_subdir>/.
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+
+    from openkb.sync import MirrorSync
+
+    source = Path(source_dir).resolve()
+    target = kb_dir / "wiki" / target_subdir
+
+    click.echo(f"Mirroring {source} → {target}")
+    click.echo("Press Ctrl+C to stop.")
+
+    sync = MirrorSync(source, target)
+    synced = sync.full_sync()
+    click.echo(f"Initial sync: {len(synced)} file(s)")
+
+    from openkb.watcher import watch_directory
+    watch_directory(source, lambda paths: sync.sync_paths([Path(p) for p in paths]))
+
+
+@cli.group(name="sync")
+@click.pass_context
+def sync_group(ctx):
+    """Git-based sync commands for the knowledge base."""
+    pass
+
+
+@sync_group.command("init")
+@click.pass_context
+def sync_init(ctx):
+    """Initialize git repository in the knowledge base."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.sync_git import init_git
+    if init_git(kb_dir):
+        click.echo(f"Git initialized: {kb_dir}")
+    else:
+        click.echo("Failed to initialize git.")
+
+
+@sync_group.command("remote")
+@click.argument("url")
+@click.pass_context
+def sync_remote(ctx, url):
+    """Set the git remote URL for sync."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.sync_git import init_git, set_remote
+    init_git(kb_dir)
+    if set_remote(kb_dir, url):
+        click.echo(f"Remote set to: {url}")
+    else:
+        click.echo("Failed to set remote.")
+
+
+@sync_group.command("commit")
+@click.option("--message", "-m", default="auto: wiki update", help="Commit message.")
+@click.pass_context
+def sync_commit(ctx, message):
+    """Commit wiki changes to git."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.sync_git import commit
+    if commit(kb_dir, message):
+        click.echo("Committed.")
+    else:
+        click.echo("Nothing to commit or git not available.")
+
+
+@sync_group.command("push")
+@click.pass_context
+def sync_push(ctx):
+    """Push committed changes to the remote."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.sync_git import push
+    ok, msg = push(kb_dir)
+    click.echo(msg if ok else f"[ERROR] {msg}")
+
+
+@sync_group.command("pull")
+@click.pass_context
+def sync_pull(ctx):
+    """Pull changes from the remote."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.sync_git import pull
+    ok, msg = pull(kb_dir)
+    click.echo(msg if ok else f"[ERROR] {msg}")
+
+
+@sync_group.command(name="sync")
+@click.option("--message", "-m", default="auto: wiki sync", help="Commit message.")
+@click.pass_context
+def sync_sync(ctx, message):
+    """Commit, push and pull (bidirectional sync)."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.sync_git import sync
+    ok, msg = sync(kb_dir, message)
+    click.echo(msg if ok else f"[ERROR] {msg}")
+
+
+@sync_group.command("status")
+@click.pass_context
+def sync_status(ctx):
+    """Show git status for the wiki."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.sync_git import status
+    click.echo(status(kb_dir))
+
+
+@cli.group(name="history")
+@click.pass_context
+def history_group(ctx):
+    """Page history and versioning commands."""
+    pass
+
+
+@history_group.command("snapshot")
+@click.option("--label", "-l", default="", help="Label for the snapshot.")
+@click.pass_context
+def history_snapshot(ctx, label):
+    """Create a full wiki snapshot."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.history import snapshot_wiki
+    snap_id = snapshot_wiki(kb_dir, label)
+    if snap_id:
+        click.echo(f"Snapshot created: {snap_id}")
+    else:
+        click.echo("Wiki directory is empty.")
+
+
+@history_group.command("list")
+@click.option("--limit", "-n", default=20, type=int, help="Number of entries.")
+@click.pass_context
+def history_list(ctx, limit):
+    """List recent snapshots and git history."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.history import list_snapshots, git_log
+
+    snapshots = list_snapshots(kb_dir, limit=limit)
+    if snapshots:
+        click.echo("Snapshots:")
+        for s in snapshots:
+            label = f" — {s.get('label', '')}" if s.get("label") else ""
+            files = s.get('files', '?')
+            click.echo(f"  {s['id']}  {s['created_at']}{label}  ({files} files)")
+
+    git = git_log(kb_dir, max_count=limit)
+    if git:
+        click.echo("\nGit log:")
+        for line in git.split("\n"):
+            click.echo(f"  {line}")
+
+    if not snapshots and not git:
+        click.echo("No history available.")
+
+
+@history_group.command("show")
+@click.argument("snap_id")
+@click.pass_context
+def history_show(ctx, snap_id):
+    """Show files in a snapshot."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.history import get_snapshot, get_snapshot_files
+
+    snap = get_snapshot(kb_dir, snap_id)
+    if snap is None:
+        click.echo(f"Snapshot not found: {snap_id}")
+        return
+
+    click.echo(f"Snapshot: {snap['id']}")
+    click.echo(f"Created:  {snap['created_at']}")
+    if snap.get("label"):
+        click.echo(f"Label:    {snap['label']}")
+    click.echo(f"Type:     {snap.get('type', 'full')}")
+    click.echo()
+    click.echo("Files:")
+    for f in get_snapshot_files(kb_dir, snap["id"]):
+        click.echo(f"  - {f}")
+
+
+@history_group.command("restore")
+@click.argument("snap_id")
+@click.option("--page", default=None, help="Restore only a specific page (relative to wiki root).")
+@click.option("--dry-run", is_flag=True, default=False, help="Show what would be restored without doing it.")
+@click.pass_context
+def history_restore(ctx, snap_id, page, dry_run):
+    """Restore wiki from a snapshot."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.history import restore_snapshot, restore_page
+
+    if page:
+        ok = restore_page(kb_dir, snap_id, page)
+        if ok:
+            click.echo(f"Restored page: {page}")
+        else:
+            click.echo(f"Failed to restore page: {page}")
+    else:
+        result = restore_snapshot(kb_dir, snap_id, dry_run=dry_run)
+        if "error" in result:
+            click.echo(f"Error: {result['error']}")
+        elif dry_run:
+            click.echo(f"Would restore {len(result['restored'])} file(s):")
+            for f in result["restored"]:
+                click.echo(f"  - {f}")
+        else:
+            click.echo(f"Restored {len(result['restored'])} file(s)")
+
+
+@history_group.command("prune")
+@click.option("--keep", "-k", default=50, type=int, help="Number of snapshots to keep.")
+@click.pass_context
+def history_prune(ctx, keep):
+    """Remove old snapshots."""
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    from openkb.history import prune_snapshots
+    removed = prune_snapshots(kb_dir, keep=keep)
+    click.echo(f"Pruned {removed} snapshot(s), kept {keep}.")
