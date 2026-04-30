@@ -138,7 +138,7 @@ function renderSection() {
     return;
   }
   el.innerHTML = list.map(p => {
-    const preview = (p.preview || '').replace(/[#*_\-\n]/g, ' ').substring(0, 120);
+    const preview = (p.preview || '').replace(/[#*_\\-\\n]/g, ' ').substring(0, 120);
     return `<li class="page-item ${currentSection.slice(0,-1)}" onclick="openPage('${currentSection}/${p.name}.md')">
       <div class="name">${p.name.replace(/-/g, ' ')}</div>
       <div class="preview">${preview}</div>
@@ -177,7 +177,7 @@ async function openPage(path) {
     content = content.replace(/^# (.+)$/gm, '<h1>$1</h1>');
     content = content.replace(/^- (.+)$/gm, '<li>$1</li>');
     content = content.replace(/`([^`]+)`/g, '<code>$1</code>');
-    content = content.replace(/\n\n/g, '</p><p>');
+    content = content.replace(/\\n\\n/g, '</p><p>');
     content = '<p>' + content + '</p>';
     document.getElementById('modal-content').innerHTML = content;
   } catch(e) {
