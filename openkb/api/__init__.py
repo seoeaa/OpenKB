@@ -18,6 +18,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from starlette.routing import Route, WebSocket
+from starlette.datastructures import UploadFile
 
 
 def _find_kb_dir() -> Path | None:
@@ -253,6 +254,51 @@ async def index_handler(request: Request) -> HTMLResponse:
     return HTMLResponse(get_index_html())
 
 
+async def upload_handler(request: Request) -> JSONResponse:
+    err = _require_kb(request)
+    if err:
+        return err
+    kb_dir: Path = request.app.state.kb_dir
+
+    form = await request.form()
+    uploaded: list[str] = []
+    errors: list[str] = []
+    files = form.getlist("files")
+
+    if not files:
+        return JSONResponse({"error": "No files provided"}, status_code=400)
+
+    from openkb.cli import add_single_file, SUPPORTED_EXTENSIONS
+
+    raw_dir = kb_dir / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    for f in files:
+        if not isinstance(f, UploadFile) or not f.filename:
+            continue
+        ext = Path(f.filename).suffix.lower()
+        if ext not in SUPPORTED_EXTENSIONS:
+            errors.append(f"{f.filename}: unsupported format ({ext})")
+            continue
+
+        dest = raw_dir / f.filename
+        try:
+            content = await f.read()
+            dest.write_bytes(content)
+
+            import asyncio
+            await asyncio.to_thread(add_single_file, dest, kb_dir)
+            uploaded.append(f.filename)
+        except Exception as exc:
+            errors.append(f"{f.filename}: {exc}")
+
+    return JSONResponse({
+        "uploaded": uploaded,
+        "errors": errors,
+        "count": len(uploaded),
+    })
+
+
 async def chat_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     kb_dir = websocket.app.state.kb_dir
@@ -307,6 +353,7 @@ routes = [
     Route("/api/list", list_handler),
     Route("/api/read", read_handler),
     Route("/api/query", query_handler, methods=["POST"]),
+    Route("/api/upload", upload_handler, methods=["POST"]),
     Route("/api/add", add_handler, methods=["POST"]),
     Route("/api/lint", lint_handler, methods=["POST"]),
     Route("/api/search", search_handler),
