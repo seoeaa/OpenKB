@@ -22,7 +22,7 @@ The idea is based on a [concept](https://x.com/karpathy/status/20398056595256445
 
 Traditional RAG rediscovers knowledge from scratch on every query. Nothing accumulates. OpenKB compiles knowledge once into a persistent wiki, then keeps it current. Cross-references already exist. Contradictions are flagged. Synthesis reflects everything consumed.
 
-### Features
+### Core Features
 
 - **Broad format support** — PDF, Word, Markdown, PowerPoint, HTML, Excel, text, and more via markitdown
 - **Scale to long documents** — Long and complex documents are handled via [PageIndex](https://github.com/VectifyAI/PageIndex) tree indexing, enabling accurate, vectorless long-context retrieval
@@ -33,6 +33,17 @@ Traditional RAG rediscovers knowledge from scratch on every query. Nothing accum
 - **Lint** — Health checks find contradictions, gaps, orphans, and stale content
 - **Watch mode** — Drop files into `raw/`, wiki updates automatically
 - **Obsidian compatible** — Wiki is plain `.md` files with `[[wikilinks]]`. Open in Obsidian for graph view and browsing
+
+### Extensions
+
+- **MCP Server** — Expose your knowledge base as MCP tools for AI agents (Claude Desktop, Kilo, Cursor, etc.). 12 tools: `kb_query`, `kb_search`, `kb_lint`, `kb_list`, `kb_read`, `kb_write`, `kb_status`, `kb_history`, and more. 5 dynamic resources. stdio and SSE transports.
+- **REST API** — HTTP API with 7 endpoints (`/api/status`, `/api/list`, `/api/read`, `/api/query`, `/api/add`, `/api/lint`, `/api/search`) + WebSocket chat. Use from any language.
+- **Agent Skills** — 9 built-in slash commands: `/summarize`, `/compare`, `/export`, `/search`, `/diff`, `/snapshot`, `/history`, `/revert`, `/sync`. Extensible via plugins.
+- **Page History** — Automatic snapshots on every wiki write. `openkb history snapshot`, `list`, `show`, `restore` (with `--dry-run`), `prune`. Git log integration.
+- **Git Sync** — Self-hosted sync between devices. `openkb sync init`, `remote <url>`, `commit`, `push`, `pull`, `sync`. Bidirectional commit-pull-push in one command.
+- **Graph Visualization** — `openkb graph` generates an interactive force-directed HTML graph of all wiki connections + optional Markdown adjacency list.
+- **Markdown Mirror** — `openkb mirror <source-dir>` watches an external directory of `.md` files and syncs into the wiki.
+- **Plugin System** — Drop Python plugins into `.openkb/plugins/`. Register lifecycle hooks (`pre_compile`, `post_query`, etc.) and custom slash commands.
 
 # 🚀 Getting Started
 
@@ -155,8 +166,12 @@ A single source might touch 10-15 wiki pages. Knowledge accumulates: each docume
 | `openkb lint` | Run structural + knowledge health checks |
 | `openkb list` | List indexed documents and concepts |
 | `openkb status` | Show knowledge base stats |
-
-<!-- | `openkb lint --fix` | Auto-fix what it can | -->
+| `openkb mcp` | Start MCP server (stdio by default, SSE with `OPENKB_MCP_SSE=1`) |
+| `openkb api` | Start REST API server on `http://localhost:8000` |
+| `openkb graph [output.html]` | Generate interactive graph visualization |
+| `openkb mirror <source-dir>` | Mirror external `.md` directory into wiki |
+| `openkb sync <subcommand>` | Git-based sync: `init`, `remote`, `commit`, `push`, `pull`, `sync`, `status` |
+| `openkb history <subcommand>` | Page versioning: `snapshot`, `list`, `show`, `restore`, `prune` |
 
 ### Interactive Chat
 
@@ -172,6 +187,7 @@ openkb chat --delete <id>         # delete a session
 
 Inside a chat, type `/` to access slash commands (Tab to complete):
 
+**Built-in:**
 - `/help` — list available commands
 - `/status` — show knowledge base status
 - `/list` — list all documents
@@ -180,6 +196,17 @@ Inside a chat, type `/` to access slash commands (Tab to complete):
 - `/clear` — start a fresh session (the current one stays on disk)
 - `/lint` — run knowledge base lint
 - `/exit` — exit (Ctrl-D also works)
+
+**Skills (LLM-powered):**
+- `/summarize <page>` — summarize a wiki page
+- `/compare <p1> <p2>` — compare two wiki pages side by side
+- `/export <file> [concepts|summaries|all]` — export wiki to a single Markdown file
+- `/search <pattern>` — full-text search across all wiki pages
+- `/diff` — show recent git changes
+- `/snapshot [label]` — create a named wiki snapshot
+- `/history` — list snapshots and git log
+- `/revert <id> [--dry-run]` — restore wiki to a previous snapshot
+- `/sync` — commit, push, and pull in one step
 
 ### Configuration
 
@@ -198,6 +225,119 @@ Model names use `provider/model` LiteLLM [format](https://docs.litellm.ai/docs/p
 | OpenAI | `gpt-5.4` |
 | Anthropic | `anthropic/claude-sonnet-4-6` |
 | Gemini | `gemini/gemini-3.1-pro-preview` |
+
+### MCP Server
+
+OpenKB can run as an MCP (Model Context Protocol) server, exposing your knowledge base to any MCP-compatible AI agent (Claude Desktop, Kilo, Cursor, Windsurf, etc.).
+
+```bash
+openkb mcp                        # stdio transport (for Claude Desktop / Kilo)
+OPENKB_MCP_SSE=1 openkb mcp      # SSE transport on http://localhost:8001
+```
+
+**Available tools (12):**
+`kb_list`, `kb_read`, `kb_read_index`, `kb_read_concept`, `kb_read_summary`, `kb_get_pages`, `kb_write`, `kb_status`, `kb_lint`, `kb_search`, `kb_query`, `kb_history`
+
+**Available resources (5):**
+`wiki://index`, `wiki://schema`, `wiki://log`, `wiki://concepts`, `wiki://summaries`
+
+Example Claude Desktop config (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "openkb": {
+      "command": "openkb",
+      "args": ["mcp", "--kb-dir", "/home/user/my-kb"]
+    }
+  }
+}
+```
+
+### REST API
+
+Start an HTTP API to access your knowledge base from any client:
+
+```bash
+openkb api                       # start on http://0.0.0.0:8000
+OPENKB_API_PORT=3000 openkb api  # custom port
+```
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/status` | KB statistics |
+| `GET` | `/api/list` | All pages (summaries, concepts, explorations) |
+| `GET` | `/api/read?path=<path>` | Read a wiki page |
+| `POST` | `/api/query` | Ask a question (`{"question": "..."}`) |
+| `POST` | `/api/add` | Add a document (`{"path": "..."}`) |
+| `POST` | `/api/lint` | Run structural + semantic lint |
+| `GET` | `/api/search?q=<pattern>` | Full-text search |
+| `WS` | `/ws/chat` | WebSocket multi-turn chat |
+
+### Page History
+
+OpenKB automatically snapshots your wiki before every write (summary generation, concept updates). You can also create snapshots manually.
+
+```bash
+openkb history snapshot -l "before big change"  # create named snapshot
+openkb history list                              # list recent snapshots
+openkb history show <id>                         # view snapshot contents
+openkb history restore <id> --dry-run            # preview restore
+openkb history restore <id>                      # restore full wiki
+openkb history prune -k 50                       # keep newest 50 snapshots
+```
+
+### Git Sync
+
+Sync your knowledge base across devices via git:
+
+```bash
+openkb sync init                   # initialize git repo
+openkb sync remote <url>           # set remote (GitHub, GitLab, private)
+openkb sync status                 # check for uncommitted changes
+openkb sync commit -m "message"    # commit wiki changes
+openkb sync push                   # push to remote
+openkb sync pull                   # pull from remote
+openkb sync sync                   # commit + pull + push in one step
+```
+
+### Graph Visualization
+
+Generate an interactive force-directed graph of all wiki connections:
+
+```bash
+openkb graph wiki/graph.html                    # HTML only
+openkb graph graph.html wiki/adjacency.md       # HTML + Markdown adjacency list
+```
+
+The HTML file opens a full-screen interactive graph where you can drag nodes, hover for descriptions, and filter by page type (concepts, summaries, explorations).
+
+### Markdown Mirror
+
+Mirror an external directory of Markdown files into your wiki. Useful for integrating with tools that export to `.md`:
+
+```bash
+openkb mirror ~/my-notes           # sync ~/my-notes into wiki/mirror/
+openkb mirror ~/projects project   # sync into wiki/project/
+```
+
+### Plugin System
+
+Extend OpenKB with custom plugins. Create a `.py` file or package in `.openkb/plugins/`:
+
+```python
+# .openkb/plugins/translator.py
+def setup(register_hook):
+    register_hook("post_compile", lambda **kw: print("Compilation done!"))
+
+def get_slash_commands():
+    return [{"name": "hello", "description": "Say hello",
+             "handler": hello_handler, "needs_arg": False}]
+
+async def hello_handler(arg="", kb_dir=None, style=None, fmt_fn=None, **kwargs):
+    fmt_fn(style, ("class:slash.ok", "Hello from plugin!\n"))
+```
+
+Available hooks: `pre_compile`, `post_compile`, `pre_query`, `post_query`, `pre_lint`, `post_lint`, `on_startup`.
 
 ### PageIndex Integration
 
@@ -253,11 +393,24 @@ OpenKB's wiki is a directory of Markdown files with `[[wikilinks]]`. Obsidian re
 - [markitdown](https://github.com/microsoft/markitdown) — Universal file-to-markdown conversion
 - [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) — Agent framework (supports non-OpenAI models via LiteLLM)
 - [LiteLLM](https://github.com/BerriAI/litellm) — Multi-provider LLM gateway
+- [MCP](https://modelcontextprotocol.io/) — Model Context Protocol server for AI agent integration
+- [Starlette](https://www.starlette.io/) — HTTP API server with WebSocket support
+- [Uvicorn](https://www.uvicorn.org/) — ASGI server
 - [Click](https://click.palletsprojects.com/) — CLI framework
 - [watchdog](https://github.com/gorakhargosh/watchdog) — Filesystem monitoring
+- [prompt_toolkit](https://python-prompt-toolkit.readthedocs.io/) — Interactive chat REPL
+- [Rich](https://rich.readthedocs.io/) — Terminal markdown rendering
 
 ### Roadmap
 
+- [x] MCP server (stdio + SSE) — expose KB to AI agents
+- [x] REST API + WebSocket chat — HTTP interface for any client
+- [x] Agent skills — extensible slash commands in chat REPL
+- [x] Page history & snapshots — versioning with restore
+- [x] Git-based sync — self-hosted multi-device sync
+- [x] Graph visualization — interactive knowledge graph
+- [x] Markdown mirror — sync external .md directories
+- [x] Plugin system — hooks and custom commands
 - [ ] Extend long document handling to non-PDF formats
 - [ ] Scale to large document collections with nested folder support
 - [ ] Hierarchical concept (topic) indexing for massive knowledge bases
